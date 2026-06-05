@@ -3,10 +3,6 @@ import asyncio
 import collections
 import re
 from aiohttp import web, ClientSession
-import nltk
-
-# 1. Download necessary NLTK data components locally in memory
-nltk.download('punkt', quiet=True)
 
 # Fetch Environment Variables
 TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -22,22 +18,29 @@ STOP_WORDS = set([
     "to", "from", "up", "down", "in", "out", "on", "off", "over", "under", "again", "further", "then", "once"
 ])
 
+# 1. Pure Python Sentence Splitter (Replaces NLTK punkt)
+def split_into_sentences(text):
+    # Splits text by periods, exclamation marks, or question marks followed by spaces and capital letters
+    sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s', text)
+    return [s.strip() for s in sentences if s.strip()]
+
 # 2. Pure Python Extractive Summarizer Logic
 def summarize_text(text, max_sentences=3):
     # Clean formatting
     text = re.sub(r'\s+', ' ', text)
     
-    # Split text into sentences using NLTK
-    sentences = nltk.sent_tokenize(text)
+    # Split text into sentences cleanly using regex
+    sentences = split_into_sentences(text)
     
     # If the text is already short, return it as is
     if len(sentences) <= max_sentences:
         return text
 
-    # Tokenize words and build a frequency map of important keywords
-    words = nltk.word_tokenize(text.lower())
+    # Tokenize words manually using regex to strip punctuation
+    words = re.findall(r'\b\w+\b', text.lower())
+    
     word_frequencies = collections.Counter(
-        word for word in words if word.isalnum() and word not in STOP_WORDS
+        word for word in words if word not in STOP_WORDS
     )
     
     # Normalize frequencies
@@ -48,7 +51,8 @@ def summarize_text(text, max_sentences=3):
     # Score sentences based on the keywords they contain
     sentence_scores = {}
     for sentence in sentences:
-        for word in nltk.word_tokenize(sentence.lower()):
+        sentence_words = re.findall(r'\b\w+\b', sentence.lower())
+        for word in sentence_words:
             if word in word_frequencies:
                 if sentence not in sentence_scores:
                     sentence_scores[sentence] = word_frequencies[word]
@@ -64,7 +68,7 @@ def summarize_text(text, max_sentences=3):
     summary = " ".join([sent for sent in sentences if sent in summarized_sentences])
     return summary
 
-# 3. Web Server Route (Health Check for Render)
+# 3. Web Server Route (Health Check for Railway)
 async def handle_health(request):
     return web.Response(text="SummaBrief Summarizer is active!")
 
@@ -95,9 +99,13 @@ async def bot_polling():
                             if text == "/start":
                                 reply_text = "📄 **Welcome to SummaBrief!**\n\nPaste or forward any long text block/article here, and I will instantly extract the core summary for you."
                             else:
-                                # Run the text summarizer
-                                summary = summarize_text(text)
-                                reply_text = f"📝 **Summary:**\n\n_{summary}_"
+                                # Run the text summarizer safely
+                                try:
+                                    summary = summarize_text(text)
+                                    reply_text = f"📝 **Summary:**\n\n_{summary}_"
+                                except Exception as nlp_err:
+                                    print(f"Core Summarizer Error: {nlp_err}")
+                                    reply_text = "❌ Sorry, I had trouble parsing that specific layout of text. Try sending it in plain paragraphs."
                                 
                             # Send response
                             send_url = f"{API_URL}sendMessage"
